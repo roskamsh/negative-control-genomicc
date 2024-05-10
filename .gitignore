@@ -1,0 +1,6 @@
+.nextflow*
+work/*
+trace*
+data/*
+chr*
+output/*
