@@ -33,7 +33,45 @@ process create_snp_channel {
         all_snps["CHR"] = all_snps["ID"].apply(pull_chr)
         all_snps["CHR"] = all_snps["CHR"].apply(remove_chr_prefix)
 
+        all_snps = all_snps.drop_duplicates()
         all_snps.to_csv('snps.csv', index = False)
+        """
+}
+
+process define_exclusion_regions {
+    container 'roskamsh/bgen_env:0.3.0'
+
+    input:
+        path exclusion_regions
+
+    output:
+        path "exclusion_regions.txt"
+
+    script:
+        """
+        #!/usr/bin/env python
+        import pandas as pd
+
+        assembly = "${params.ASSEMBLY}"
+        exclusion_file = pd.read_csv("${exclusion_regions}")
+        exclusion_file["lower_bound"] = exclusion_file["lower_bound"].apply(int)
+        exclusion_file["upper_bound"] = exclusion_file["lower_bound"].apply(int)
+        exclusion_ranges =  exclusion_file['CHR'].astype(str) + ':' + exclusion_file['lower_bound'].astype(str) + '-' + exclusion_file['upper_bound'].astype(str)
+
+        # Format like QCtool requires, space-separated
+        exclusion_ranges_formatted = " ".join(exclusion_ranges)
+
+        # Add FlashPCA2 exclusion regions to this
+        if (assembly in ["hg19","grch37"]):
+            exclusion_ranges_formatted = exclusion_ranges_formatted + " 5:44000000-51500000 6:25000000-33500000 8:8000000-12000000 11:45000000-57000000"
+        elif (assembly in ["hg38","grch38"]):
+            exclusion_ranges_formatted = exclusion_ranges_formatted + " 5:43999898-52204166 6:24999772-33532223 8:8142478-12142491 11:44978449-57232526"
+        else:
+            raise ValueError("No valid assembly given. Please choose either hg19/grch37 or hg38/grch38.")
+
+        with open('exclusion_regions.txt', 'w') as file:
+            # Write the string to the file
+            file.write(exclusion_ranges_formatted) 
         """
 }
 
@@ -43,14 +81,15 @@ process generate_info_score {
     publishDir("${params.OUTDIR}/info_scores", pattern: "*.snpstats") 
 
     input:
-        tuple val(chr), val(prefix), path(files)
+        tuple val(chr), val(prefix), path(files), path(exclusion_regions)
 
     output:
         tuple val(chr), path("chr${chr}.snpstats")
 
     script:
         """
-        qctool -g ${prefix}${chr}.bgen -s ${prefix}${chr}.sample -snp-stats -osnp chr${chr}.snpstats
+        ranges=\$( cat ${exclusion_regions} )
+        qctool -g ${prefix}${chr}.bgen -s ${prefix}${chr}.sample -excl-range \$ranges -snp-stats -osnp chr${chr}.snpstats
         """
 }
 
@@ -89,22 +128,22 @@ process compile_info_score {
         path 'info_score0.6_all_chrs.csv'
 
     script:
-    """
-    #!/usr/bin/env python
+        """
+        #!/usr/bin/env python
 
-    import pandas as pd
+        import pandas as pd
 
-    files = "${files}".strip('[]').split(' ')
+        files = "${files}".strip('[]').split(' ')
 
-    dfs = []
-    for file in files:
-        df = pd.read_csv(file)
-        dfs.append(df)
-    
-    compiled = pd.concat(dfs, ignore_index=True)
+        dfs = []
+        for file in files:
+            df = pd.read_csv(file)
+            dfs.append(df)
+        
+        compiled = pd.concat(dfs, ignore_index=True)
 
-    compiled.to_csv("info_score0.6_all_chrs.csv", index = False)
-    """
+        compiled.to_csv("info_score0.6_all_chrs.csv", index = False)
+        """
 }
 
 workflow info_score {
@@ -123,15 +162,21 @@ workflow info_score {
                 files: [files]
             }
             .set { bgen_files_ch }
+        Channel
+            .fromPath(params.EXCLUSION_REGIONS, checkIfExists: true)
+            .set { exclusion_regions }
 
         snps_csv = create_snp_channel(bqtls, eqtls)
         chrs_ch = Channel.of(1..22)
 
+        define_exclusion_regions(exclusion_regions)
+
         chrs_ch
             .combine(bgen_files_ch.prefix)
             .combine(bgen_files_ch.files)
+            .combine(define_exclusion_regions.out)
             .set { chr_bgen_ch }
-            
+
         generate_info_score(chr_bgen_ch)
 
         filter_low_quality_snps(generate_info_score.out)
