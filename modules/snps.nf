@@ -5,7 +5,7 @@ process get_maf_match {
     tuple val(CHR), val(SNP), val(TYPE), val(TF), path(INFO_SCORES)
 
     output:
-    path "${SNP}_negative_control_variant.csv"
+    path "${SNP}_${TYPE}_${TF}_negative_control_variant.csv"
 
     script:
     """
@@ -61,7 +61,7 @@ process get_maf_match {
     qtltype = "${TYPE}"
     tf = "${TF}"
     all_snps = pd.read_csv("${INFO_SCORES}")
-    relative_threshold = 0.05
+    relative_threshold = 0.01
     rng = 123
 
     all_snps_maf = all_snps.minor_allele_frequency.values
@@ -71,12 +71,62 @@ process get_maf_match {
     match_maf = abs((variant_maf - all_snps_maf)/variant_maf) <= relative_threshold
     variants_that_match = all_snps[match_maf].copy()
     ncandidate = variants_that_match.shape[0]
-    print(f"{ncandidate} MAF-matched variants found from initial search. Now checking for functional annotation.")
-    # Now - query ensembl
-    variants_that_match['is_in_functional_region'] = variants_that_match["rsid"].apply(check_snp_in_functional_region)
-    to_sample_from = variants_that_match[np.logical_not(variants_that_match.is_in_functional_region)]
-    sampled_variant = to_sample_from['rsid'].sample(n=1, random_state=rng).values[0]
+    print(f"{ncandidate} MAF-matched variants found from initial search. Will sample from this list and then check for functional annotation.")
+    is_functional = True
+    while is_functional:
+        sampled_variant = variants_that_match['rsid'].sample(n=1, random_state=rng).values[0]
+        is_functional = check_snp_in_functional_region(sampled_variant)
+        rng = rng + 1
+    print(f"Found MAF-matched SNP {sampled_variant}.")
     out = pd.DataFrame([[snp,sampled_variant,variant_maf,qtltype,tf]], columns = ['input_snp','negative_control_snp','maf_to_match','type','tf'])
-    out.to_csv(f"{snp}_negative_control_variant.csv", index = False)
+    out.to_csv(f"{snp}_{qtltype}_{tf}_negative_control_variant.csv", index = False)
     """
+}
+
+process compile_results {
+    container 'roskamsh/bgen_env:0.3.0'
+    publishDir '${params.OUTDIR}'
+
+    input:
+    path files
+
+    output:
+    "negative_control_bqtls.csv"
+    "negative_control_transactors.csv"
+
+    script:
+    """
+    #!/usr/bin/env python
+
+    import pandas as pd
+    import glob
+
+    files = glob.glob("./*_negative_control_variant.csv")
+    dfs = []
+
+    for file in files:
+        df = pd.read_csv(file)
+        dfs.append(df)
+
+    final = pd.concat(dfs, ignore_index = True)
+    eqtls = final[final.type == 'eQTL'].copy()
+    bqtls = final[final.type == 'bQTL'].copy()
+    eqtls.to_csv("negative_control_transactors.csv", index = False)
+    bqtls.to_csv("negative_control_bqtls.csv", index = False)
+    """
+
+}
+
+workflow generate_negative_control {
+    take:
+    snps_info_score
+
+    main:
+    get_maf_match(snps_info_score)
+
+    get_maf_match.out
+        .collect()
+        .set { negative_control_files }
+
+    compile_results(negative_control_files)
 }
