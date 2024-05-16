@@ -48,7 +48,7 @@ To run the pipeline, start a screen session, activate your `nextflow` environmen
 ```
 screen
 conda activate nextflow
-nextflow run main.nf -profile eddie -resume
+nextflow run main.nf -c your_config.config -profile eddie -resume
 ```
 
 ### Output
