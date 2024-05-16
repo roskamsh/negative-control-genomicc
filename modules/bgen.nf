@@ -107,7 +107,7 @@ process filter_low_quality_snps {
         #!/usr/bin/env python
         import pandas as pd
 
-        df = pd.read_csv("${snpstats}", delimiter="\t", skiprows=9)
+        df = pd.read_csv("${snpstats}", delimiter="\t", skiprows=10)
         df = df[df["info"] >= 0.6]
 
         snps = df[["rsid","chromosome","position","alleleA","alleleB","HW_exact_p_value",
