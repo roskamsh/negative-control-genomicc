@@ -2,10 +2,10 @@ process get_maf_match {
     container 'roskamsh/bgen_env:0.3.0'
 
     input:
-    tuple val(CHR), val(SNP), val(TYPE), val(TF), path(INFO_SCORES)
+    tuple val(CHR), val(SNP), val(TYPE), val(TF), path(INFO_SCORES), val(REPLICATE)
 
     output:
-    path "${SNP}_${TYPE}_${TF}_negative_control_variant.csv"
+    path "${SNP}_${TYPE}_${TF}_rep${REPLICATE}_negative_control_variant.csv"
 
     script:
     """
@@ -60,9 +60,10 @@ process get_maf_match {
     snp = "${SNP}"
     qtltype = "${TYPE}"
     tf = "${TF}"
+    replicate = int("${REPLICATE}")
     all_snps = pd.read_csv("${INFO_SCORES}")
     relative_threshold = 0.01
-    rng = 123
+    rng = 123*replicate 
 
     all_snps_maf = all_snps.minor_allele_frequency.values
 
@@ -78,14 +79,14 @@ process get_maf_match {
         is_functional = check_snp_in_functional_region(sampled_variant)
         rng = rng + 1
     print(f"Found MAF-matched SNP {sampled_variant}.")
-    out = pd.DataFrame([[snp,sampled_variant,variant_maf,qtltype,tf]], columns = ['input_snp','negative_control_snp','maf_to_match','type','tf'])
-    out.to_csv(f"{snp}_{qtltype}_{tf}_negative_control_variant.csv", index = False)
+    out = pd.DataFrame([[snp,replicate,sampled_variant,variant_maf,qtltype,tf]], columns = ['input_snp','replicate,'negative_control_snp','maf_to_match','type','tf'])
+    out.to_csv(f"{snp}_{qtltype}_{tf}_rep{replicate}_negative_control_variant.csv", index = False)
     """
 }
 
 process compile_results {
     container 'roskamsh/bgen_env:0.3.0'
-    publishDir '${params.OUTDIR}'
+    publishDir("${params.OUTDIR}/final_snps", mode: "copy")
 
     input:
     path files
@@ -122,7 +123,13 @@ workflow generate_negative_control {
     snps_info_score
 
     main:
-    get_maf_match(snps_info_score)
+    nreplicates = Channel.from(1..params.NREPLICATES)
+
+    // Create combined channel which is the cartesian product of snps_info_score and nreplicates
+    snps_info_score.combine(nreplicates)
+        .set { snps_info_replicate }
+    
+    get_maf_match(snps_info_replicate)
 
     get_maf_match.out
         .collect()
