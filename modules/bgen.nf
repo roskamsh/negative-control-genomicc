@@ -52,7 +52,6 @@ process define_exclusion_regions {
         #!/usr/bin/env python
         import pandas as pd
 
-        assembly = "${params.ASSEMBLY}"
         exclusion_file = pd.read_csv("${exclusion_regions}")
         exclusion_file["lower_bound"] = exclusion_file["lower_bound"].apply(int)
         exclusion_file["upper_bound"] = exclusion_file["lower_bound"].apply(int)
@@ -60,14 +59,6 @@ process define_exclusion_regions {
 
         # Format like QCtool requires, space-separated
         exclusion_ranges_formatted = " ".join(exclusion_ranges)
-
-        # Add FlashPCA2 exclusion regions to this
-        if (assembly in ["hg19","grch37"]):
-            exclusion_ranges_formatted = exclusion_ranges_formatted + " 5:44000000-51500000 6:25000000-33500000 8:8000000-12000000 11:45000000-57000000"
-        elif (assembly in ["hg38","grch38"]):
-            exclusion_ranges_formatted = exclusion_ranges_formatted + " 5:43999898-52204166 6:24999772-33532223 8:8142478-12142491 11:44978449-57232526"
-        else:
-            raise ValueError("No valid assembly given. Please choose either hg19/grch37 or hg38/grch38.")
 
         with open('exclusion_regions.txt', 'w') as file:
             # Write the string to the file
@@ -78,7 +69,7 @@ process define_exclusion_regions {
 process generate_info_score {
     label 'moremem'
     container 'roskamsh/qctools:0.1.1'
-    publishDir("${params.OUTDIR}/info_scores", pattern: "*.snpstats") 
+    publishDir("${params.OUTDIR}/info_scores", pattern: "*.snpstats", mode: "copy") 
 
     input:
         tuple val(chr), val(prefix), path(files), path(exclusion_regions)
