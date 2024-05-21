@@ -79,21 +79,21 @@ process get_maf_match {
         is_functional = check_snp_in_functional_region(sampled_variant)
         rng = rng + 1
     print(f"Found MAF-matched SNP {sampled_variant}.")
-    out = pd.DataFrame([[snp,replicate,sampled_variant,variant_maf,qtltype,tf]], columns = ['input_snp','replicate,'negative_control_snp','maf_to_match','type','tf'])
+    out = pd.DataFrame([[snp,replicate,sampled_variant,variant_maf,qtltype,tf]], columns = ['input_snp','replicate','negative_control_snp','maf_to_match','type','tf'])
     out.to_csv(f"{snp}_{qtltype}_{tf}_rep{replicate}_negative_control_variant.csv", index = False)
     """
 }
 
 process compile_results {
     container 'roskamsh/bgen_env:0.3.0'
-    publishDir("${params.OUTDIR}/final_snps", mode: "copy")
+    publishDir("${params.OUTDIR}/snps", pattern: "*.csv", mode: "copy")
 
     input:
     path files
 
     output:
-    "negative_control_bqtls.csv"
-    "negative_control_transactors.csv"
+    path "negative_control_bqtls.csv", emit: bqtls
+    path "negative_control_transactors.csv", emit: transactors
 
     script:
     """
@@ -118,6 +118,43 @@ process compile_results {
 
 }
 
+process create_ld_file {
+    container 'roskamsh/bgen_env:0.3.0'
+    publishDir("${params.OUTDIR}/snps", mode: "copy")
+
+    input:
+    path bqtls
+    path transactors
+
+    output:
+    path "snps_for_ld_block_removal.csv"
+
+    script:
+    """
+    #!/usr/bin/env python
+
+    import pandas as pd
+
+    bqtls = pd.read_csv("${bqtls}")
+    eqtls = pd.read_csv("${transactors}")
+
+    def get_chr_pos(id):
+        chr, pos, _, _ = id.split(":")
+        if chr.startswith("chr"):
+            chr = chr[3:]
+        return chr, pos
+
+    out = pd.concat([bqtls,eqtls])
+    out[["CHR","POS"]] = out["negative_control_snp"].apply(lambda x: pd.Series(get_chr_pos(x)))
+
+    out = out[["negative_control_snp","CHR","POS"]]
+    out.columns = ["RSID","CHR","POS"]
+    final = out.drop_duplicates()
+    final.to_csv("snps_for_ld_block_removal.csv", index = False)
+    """
+
+}
+
 workflow generate_negative_control {
     take:
     snps_info_score
@@ -136,4 +173,6 @@ workflow generate_negative_control {
         .set { negative_control_files }
 
     compile_results(negative_control_files)
+
+    create_ld_file(compile_results.out.bqtls, compile_results.out.transactors)
 }
