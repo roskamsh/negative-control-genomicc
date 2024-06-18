@@ -156,6 +156,9 @@ workflow info_score {
         Channel
             .fromPath(params.EXCLUSION_REGIONS, checkIfExists: true)
             .set { exclusion_regions }
+        Channel
+            .fromPath(params.SAMPLE_REGIONS, checkIfExists: true)
+            .set { sample_regions }
 
         snps_csv = create_snp_channel(bqtls, eqtls)
         chrs_ch = Channel.of(1..22)
@@ -183,6 +186,7 @@ workflow info_score {
             .splitCsv(header:true)
             .map { row -> tuple(row.CHR, row.ID, row.TYPE, row.TF) }
             .combine(compile_info_score.out)
+            .combine(sample_regions)
             .set { snps_info_score_ch }
         
     emit:
