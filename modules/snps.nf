@@ -2,7 +2,7 @@ process get_maf_match {
     container 'roskamsh/bgen_env:0.3.0'
 
     input:
-    tuple val(CHR), val(SNP), val(TYPE), val(TF), path(INFO_SCORES), val(REPLICATE)
+    tuple val(CHR), val(SNP), val(TYPE), val(TF), path(INFO_SCORES), path(SAMPLE_REGIONS), val(REPLICATE)
 
     output:
     path "${SNP}_${TYPE}_${TF}_rep${REPLICATE}_negative_control_variant.csv"
@@ -57,6 +57,25 @@ process get_maf_match {
             print(f"Failed to fetch SNP information. Status code: {response.status_code}")
             return False
 
+    def filter_variants(variants_df, ranges_df):
+        filtered_variants = pd.DataFrame()
+        # Iterate over each range in the ranges_df
+        for _, range_row in ranges_df.iterrows():
+            chromosome = str(range_row['CHR'])
+            start = range_row['START']
+            end = range_row['END']
+            # Check for chromosome name formatting
+            if not chromosome.startswith('chr'):
+                chromosome = 'chr' + chromosome
+            # Filter for variants that fall within these ranges
+            filtered = variants_df[
+                (variants_df['chromosome'] == chromosome) &
+                (variants_df['position'] >= start) &
+                (variants_df['position'] <= end)
+            ]
+            filtered_variants = pd.concat([filtered_variants, filtered], ignore_index=True)
+        return filtered_variants
+
     snp = "${SNP}"
     qtltype = "${TYPE}"
     tf = "${TF}"
@@ -66,16 +85,19 @@ process get_maf_match {
     rng = 123*replicate 
 
     all_snps_maf = all_snps.minor_allele_frequency.values
+    sample_regions = pd.read_csv("${SAMPLE_REGIONS}")
 
     print(f"Finding candidate MAF-matched SNPs for {snp}.")
     variant_maf = all_snps[all_snps.rsid == snp].minor_allele_frequency.values[0]
     match_maf = abs((variant_maf - all_snps_maf)/variant_maf) <= relative_threshold
     variants_that_match = all_snps[match_maf].copy()
-    ncandidate = variants_that_match.shape[0]
+    # Now filter for only regions we want to sample from
+    filt_variants_that_match = filter_variants(variants_that_match, sample_regions)
+    ncandidate = filt_variants_that_match.shape[0]
     print(f"{ncandidate} MAF-matched variants found from initial search. Will sample from this list and then check for functional annotation.")
     is_functional = True
     while is_functional:
-        sampled_variant = variants_that_match['rsid'].sample(n=1, random_state=rng).values[0]
+        sampled_variant = filt_variants_that_match['rsid'].sample(n=1, random_state=rng).values[0]
         is_functional = check_snp_in_functional_region(sampled_variant)
         rng = rng + 1
     print(f"Found MAF-matched SNP {sampled_variant}.")
